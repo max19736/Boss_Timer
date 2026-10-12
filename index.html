@@ -150,8 +150,20 @@
     </div>
 
   </div>
-
+  
+  <!-- 底部頁尾與版本標示 -->
+  <footer class="mt-12 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
+    Boss Timer & Loot Tracker <span class="version-tag font-mono text-slate-400">v1.0.0</span>
+  </footer>
+	
   <script>
+  // =========================================================
+    // ⚙️ 全域版本號設定 (修改此處即可全站同步更新版號)
+    // =========================================================
+    const APP_VERSION = 'v1.0.1';
+
+    // 填入全站版本號標籤
+    document.querySelectorAll('.version-tag').forEach(el => el.textContent = APP_VERSION);
     // =========================================================
     // ⚙️ BOSS 資料庫與獨立掉落物清單
     // =========================================================
