@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boss 倒數計時器</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+    .boss-card { background: #1e293b; border: 1px solid #334155; }
+    .timer-card { background: #182232; border: 1px solid #2d3e50; }
+    .loot-card { background: #1c2536; border: 1px solid #334155; }
+    
+    /* 倒數狀態高亮與脈衝動畫 */
+    .timer-card.upcoming { border-color: #eab308; background: #26200a; animation: pulse-yellow 1.5s infinite; }
+    .timer-card.in-range { border-color: #f97316; background: #2b180d; animation: pulse-orange 1.5s infinite; }
+    .timer-card.overdue { border-color: #ef4444; background: #2a1215; animation: pulse-red 1s infinite; }
+
+    @keyframes pulse-yellow { 0%, 100% { border-color: rgba(234, 179, 8, 1); } 50% { border-color: rgba(234, 179, 8, 0.3); } }
+    @keyframes pulse-orange { 0%, 100% { border-color: rgba(249, 115, 22, 1); } 50% { border-color: rgba(249, 115, 22, 0.3); } }
+    @keyframes pulse-red { 0%, 100% { border-color: rgba(239, 68, 68, 1); } 50% { border-color: rgba(239, 68, 68, 0.3); } }
+  </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen">
+
+  <div class="max-w-6xl mx-auto">
+    <!-- 標題與分頁切換 -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b border-slate-700 gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
+          ⚡ Boss 倒數計時器
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">本地計時！</p>
+      </div>
+      
+      <!-- 分頁頁籤按鈕 -->
+      <div class="flex gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700">
+        <button id="tab-timer-btn" onclick="switchTab('timer')" 
+          class="px-4 py-1.5 rounded-md text-xs font-bold transition bg-amber-500 text-slate-950">
+          ⏱️ Boss 頻道計時
+        </button>
+        <button id="tab-loot-btn" onclick="switchTab('loot')" 
+          class="px-4 py-1.5 rounded-md text-xs font-bold transition text-slate-400 hover:text-slate-200">
+          💎 團隊戰利品日誌
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== 分頁 1: 倒數計時面板 ==================== -->
+    <div id="tab-timer" class="space-y-6">
+      <!-- 8 隻固定 Boss 極速發射區 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" id="bossInputs"></div>
+
+      <!-- 運行中的計時面板控制列 -->
+      <div class="flex justify-between items-center flex-wrap gap-2 pt-4 border-t border-slate-800">
+        <h2 class="text-lg font-bold text-slate-200 flex items-center gap-2">
+          ⏱️ 進行中計時 (<span id="activeCount">0</span>/60)
+        </h2>
+        
+        <div class="flex items-center gap-2 flex-wrap">
+          <button onclick="shareData()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white font-semibold px-3 py-1.5 rounded flex items-center gap-1 transition shadow">
+            🔗 複製所有計時與戰利品分享連結
+          </button>
+          <button onclick="sortTimers()" class="text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-semibold px-3 py-1.5 rounded transition">
+            ⏱️ 依時間排序 (最早優先)
+          </button>
+          <button onclick="clearAllTimers()" class="text-xs text-red-400 hover:text-red-300 px-2 py-1.5">清空所有計時</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" id="timerGrid"></div>
+    </div>
+
+    <!-- ==================== 分頁 2: 戰利品紀錄面板 ==================== -->
+    <div id="tab-loot" class="hidden space-y-6">
+      
+      <!-- 出團參與玩家管理區 -->
+      <div class="boss-card p-4 rounded-lg shadow-md border-l-4 border-l-cyan-500">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+            👥 目前出團陣容 (<span id="playerCount" class="text-cyan-400">0</span> 人)
+          </h3>
+          <button onclick="clearAllPlayers()" class="text-xs text-red-400 hover:text-red-300">清空名單</button>
+        </div>
+        <div class="flex gap-2 mb-3">
+          <input type="text" id="new-player-input" placeholder="輸入隊友 ID" 
+            onkeydown="if(event.key==='Enter'){addPlayer(); event.preventDefault();}"
+            class="bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 focus:border-amber-400 outline-none w-48">
+          <button onclick="addPlayer()" class="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded text-xs font-semibold">
+            + 新增隊友
+          </button>
+        </div>
+        <!-- 玩家標籤列表 -->
+        <div class="flex flex-wrap gap-2" id="playerTagContainer"></div>
+      </div>
+
+      <!-- 新增戰利品表單 -->
+      <div class="boss-card p-4 rounded-lg shadow-md">
+        <h3 class="text-sm font-bold text-amber-400 mb-3 flex items-center gap-1">
+          ➕ 登記團隊戰利品
+        </h3>
+        <form onsubmit="addLootRecord(event)" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <!-- 1. 選擇首領 -->
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">1. 選擇首領</label>
+            <select id="loot-boss" onchange="onLootBossChange()" required 
+              class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 focus:border-amber-400 outline-none">
+            </select>
+          </div>
+
+          <!-- 2. 獨立掉落物選單 -->
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">2. 掉落物品 (依首領獨立)</label>
+            <select id="loot-item" required 
+              class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 focus:border-amber-400 outline-none">
+            </select>
+          </div>
+
+          <div class="sm:col-span-2 flex justify-end mt-1">
+            <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-6 py-2 rounded text-sm transition">
+              登記戰利品 (附帶當前陣容)
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- 戰利品篩選控制列 -->
+      <div class="boss-card p-3 rounded-lg flex flex-wrap justify-between items-center gap-3">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs font-bold text-amber-400 flex items-center gap-1">🔍 條件篩選：</span>
+          
+          <!-- 按成員篩選 -->
+          <select id="filter-player" onchange="renderLoots()" class="bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded px-2.5 py-1.5 focus:border-amber-400 outline-none">
+            <option value="ALL">👥 全部成員 (不限)</option>
+          </select>
+
+          <!-- 按首領篩選 -->
+          <select id="filter-boss" onchange="renderLoots()" class="bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded px-2.5 py-1.5 focus:border-amber-400 outline-none">
+            <option value="ALL">🔥 全部首領 (不限)</option>
+          </select>
+        </div>
+
+        <button onclick="clearAllLoots()" class="text-xs text-red-400 hover:text-red-300 px-2 py-1">
+          清空所有紀錄
+        </button>
+      </div>
+
+      <!-- 戰利品日誌卡片列表 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" id="lootGrid"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // =========================================================
+    // ⚙️ BOSS 資料庫與獨立掉落物清單
+    // =========================================================
+    const BOSS_DATA = [
+      { 
+        id: 'Mano', name: '紅寶王', minMins: 45, maxMins: 45, icon: '🐌',
+        lootItems: ['扎昆頭盔', '扎昆寶珠', '詛咒的木牌', '靈魂碎片', '其他 / 雜物']
+      },
+      { 
+        id: 'Stumpy', name: '樹妖王', minMins: 45, maxMins: 50, icon: '🌳',
+        lootItems: ['龍王項鍊', '九靈龍蛋', '龍王寶珠', '九靈龍角', '其他 / 雜物']
+      },
+      { 
+        id: 'Zombie Luppin', name: '殭屍猴王', minMins: 45, maxMins: 45, icon: '🐒',
+        lootItems: ['混沌皮卡啾腰帶', '皮卡啾寶珠', '混沌皮卡啾面具', '靈魂碎片', '其他 / 雜物']
+      },
+      { 
+        id: 'King Clang', name: '巨居蟹', minMins: 45, maxMins: 45, icon: '🦀',
+        lootItems: ['死靈武器', '希拉寶珠', '永恆的生命石', '希拉寵物', '其他 / 雜物']
+      },
+      { 
+        id: 'Mushmom', name: '蘑菇王', minMins: 42, maxMins: 62, icon: '🍄️',
+        lootItems: ['暴君披風', '梅格奈斯寶珠', '詛咒的魔界徽章', '陰影商人金幣', '其他 / 雜物']
+      },
+      { 
+        id: 'Dyle', name: '沼澤巨鱷', minMins: 45, maxMins: 45, icon: '🐊',
+        lootItems: ['支配者墜飾', '阿卡伊儂寶珠', '太古之楓', '靈魂碎片', '其他 / 雜物']
+      },
+      { 
+        id: 'Zombie Mushmom', name: '殭屍蘑菇王', minMins: 42, maxMins: 62, icon: '🍄‍🟫',
+        lootItems: ['凡蕾娜戒指', '冰雪結晶', '凡蕾娜寶珠', '靈魂碎片', '其他 / 雜物']
+      },
+      { 
+        id: 'Balrog', name: '巴洛古', minMins: 180, maxMins: 180, icon: '👑',
+        lootItems: ['創世解封素材', '漆黑的 BOSS 飾品', '黑魔法師寶珠', '重破壞石', '其他 / 雜物']
+      }
+    ];
+
+    let timers = JSON.parse(localStorage.getItem('maple_timers_v8') || '[]');
+    let loots = JSON.parse(localStorage.getItem('maple_loots_v5') || '[]');
+    let players = JSON.parse(localStorage.getItem('maple_players_v3') || '["隊友A", "隊友B"]');
+
+    // 切換分頁
+    function switchTab(tab) {
+      const timerTab = document.getElementById('tab-timer');
+      const lootTab = document.getElementById('tab-loot');
+      const timerBtn = document.getElementById('tab-timer-btn');
+      const lootBtn = document.getElementById('tab-loot-btn');
+
+      if (tab === 'timer') {
+        timerTab.classList.remove('hidden');
+        lootTab.classList.add('hidden');
+        timerBtn.className = 'px-4 py-1.5 rounded-md text-xs font-bold transition bg-amber-500 text-slate-950';
+        lootBtn.className = 'px-4 py-1.5 rounded-md text-xs font-bold transition text-slate-400 hover:text-slate-200';
+      } else {
+        timerTab.classList.add('hidden');
+        lootTab.classList.remove('hidden');
+        lootBtn.className = 'px-4 py-1.5 rounded-md text-xs font-bold transition bg-amber-500 text-slate-950';
+        timerBtn.className = 'px-4 py-1.5 rounded-md text-xs font-bold transition text-slate-400 hover:text-slate-200';
+        updateFilterSelects();
+        renderLoots();
+      }
+    }
+
+    // 初始化 UI
+    function initUI() {
+      // 繪製 Boss 輸入卡片
+      const bossContainer = document.getElementById('bossInputs');
+      bossContainer.innerHTML = BOSS_DATA.map(boss => `
+        <div class="boss-card p-3 rounded-lg shadow-sm">
+          <div class="flex justify-between items-center mb-2">
+            <span class="font-bold text-slate-100">${boss.icon} ${boss.name}</span>
+            <span class="text-xs text-amber-300 bg-slate-800 px-1.5 py-0.5 rounded font-mono">
+              ${boss.minMins}~${boss.maxMins}分
+            </span>
+          </div>
+          <div class="flex gap-2">
+            <input type="number" id="ch-${boss.id}" placeholder="頻道" min="1" max="60"
+              onkeydown="if(event.key==='Enter') quickStart('${boss.id}')"
+              class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-center focus:border-amber-400 outline-none">
+            <button onclick="quickStart('${boss.id}')" 
+              class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-3 py-1 rounded text-sm whitespace-nowrap">
+              送出
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      // 初始化戰利品首領選單
+      const lootBossSelect = document.getElementById('loot-boss');
+      lootBossSelect.innerHTML = BOSS_DATA.map(b => `<option value="${b.id}">${b.icon} ${b.name}</option>`).join('');
+
+      renderPlayers();
+      onLootBossChange();
+    }
+
+    // 更新篩選下拉選單
+    function updateFilterSelects() {
+      const filterPlayerSelect = document.getElementById('filter-player');
+      const currentSelectedPlayer = filterPlayerSelect.value;
+      
+      const allHistoricalPlayers = new Set(players);
+      loots.forEach(l => (l.snapshotPlayers || []).forEach(p => allHistoricalPlayers.add(p)));
+
+      filterPlayerSelect.innerHTML = `<option value="ALL">👥 全部成員 (不限)</option>` + 
+        Array.from(allHistoricalPlayers).map(p => `<option value="${p}">👤 ${p}</option>`).join('');
+      filterPlayerSelect.value = currentSelectedPlayer || 'ALL';
+
+      const filterBossSelect = document.getElementById('filter-boss');
+      const currentSelectedBoss = filterBossSelect.value;
+      filterBossSelect.innerHTML = `<option value="ALL">🔥 全部首領 (不限)</option>` +
+        BOSS_DATA.map(b => `<option value="${b.name}">${b.icon} ${b.name}</option>`).join('');
+      filterBossSelect.value = currentSelectedBoss || 'ALL';
+    }
+
+    // 連動載入獨立掉落物選單
+    function onLootBossChange() {
+      const selectedBossId = document.getElementById('loot-boss').value;
+      const boss = BOSS_DATA.find(b => b.id === selectedBossId) || BOSS_DATA[0];
+      const lootItemSelect = document.getElementById('loot-item');
+
+      lootItemSelect.innerHTML = boss.lootItems.map(item => `<option value="${item}">${item}</option>`).join('');
+    }
+
+    // 👥 出團參與玩家管理機制
+    function renderPlayers() {
+      const container = document.getElementById('playerTagContainer');
+      document.getElementById('playerCount').textContent = players.length;
+
+      if (players.length === 0) {
+        container.innerHTML = `<span class="text-xs text-slate-500">尚無參與隊友，請於上方輸入欄新增</span>`;
+        return;
+      }
+
+      container.innerHTML = players.map((p, index) => `
+        <span class="inline-flex items-center gap-1.5 bg-cyan-950/80 border border-cyan-500/50 text-cyan-200 text-xs px-3 py-1 rounded-full shadow-sm font-semibold">
+          👤 ${p}
+          <button onclick="removePlayer(${index})" class="text-cyan-400 hover:text-red-400 font-bold text-xs ml-1 transition">✕</button>
+        </span>
+      `).join('');
+
+      updateFilterSelects();
+    }
+
+    function addPlayer() {
+      const input = document.getElementById('new-player-input');
+      const name = input.value.trim();
+      if (name && !players.includes(name)) {
+        players.push(name);
+        input.value = '';
+        saveData();
+        renderPlayers();
+      }
+    }
+
+    function removePlayer(index) {
+      players.splice(index, 1);
+      saveData();
+      renderPlayers();
+    }
+
+    function clearAllPlayers() {
+      if (confirm('確定要清空所有參與玩家名單嗎？')) {
+        players = [];
+        saveData();
+        renderPlayers();
+      }
+    }
+
+    // 發射倒數
+    function quickStart(bossId) {
+      const boss = BOSS_DATA.find(b => b.id === bossId);
+      const chInput = document.getElementById(`ch-${bossId}`);
+      const ch = parseInt(chInput.value);
+
+      if (!ch || ch < 1 || ch > 60) {
+        alert('請輸入正確的頻道 (1 ~ 60)');
+        chInput.focus();
+        return;
+      }
+
+      const existingIndex = timers.findIndex(t => t.bossId === bossId && t.ch === ch);
+      if (existingIndex !== -1) {
+        if (!confirm(`⚠️ ${boss.name} ${ch} 頻 已在計時中！確定要覆蓋嗎？`)) return;
+      } else if (timers.length >= 60) {
+        alert('已達到上限 60 個計時器！');
+        return;
+      }
+
+      const now = Date.now();
+      const minTarget = now + boss.minMins * 60 * 1000;
+      const maxTarget = now + boss.maxMins * 60 * 1000;
+
+      const newTimer = {
+        id: Date.now().toString(),
+        bossId: boss.id,
+        bossName: boss.name,
+        icon: boss.icon,
+        ch: ch,
+        minTarget: minTarget,
+        maxTarget: maxTarget
+      };
+
+      if (existingIndex !== -1) {
+        timers[existingIndex] = newTimer;
+      } else {
+        timers.push(newTimer);
+      }
+
+      chInput.value = '';
+      sortTimers();
+    }
+
+    function sortTimers() {
+      timers.sort((a, b) => a.minTarget - b.minTarget);
+      saveData();
+      renderTimers();
+    }
+
+    // ➕ 新增團隊戰利品紀錄
+    function addLootRecord(e) {
+      e.preventDefault();
+      const bossId = document.getElementById('loot-boss').value;
+      const boss = BOSS_DATA.find(b => b.id === bossId);
+      const item = document.getElementById('loot-item').value;
+
+      const now = new Date();
+      const timeStr = `${now.getMonth()+1}/${now.getDate()} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+
+      loots.unshift({
+        id: Date.now().toString(),
+        bossName: boss ? boss.name : 'Boss',
+        bossIcon: boss ? boss.icon : '👹',
+        item: item,
+        time: timeStr,
+        snapshotPlayers: [...players]
+      });
+
+      saveData();
+      updateFilterSelects();
+      renderLoots();
+    }
+
+    function deleteLoot(id) {
+      loots = loots.filter(l => l.id !== id);
+      saveData();
+      updateFilterSelects();
+      renderLoots();
+    }
+
+    function clearAllLoots() {
+      if (confirm('確定要清空所有團隊戰利品紀錄嗎？')) {
+        loots = [];
+        saveData();
+        updateFilterSelects();
+        renderLoots();
+      }
+    }
+
+    // 🔗 打包統一分享
+    function shareData() {
+      if (timers.length === 0 && loots.length === 0) {
+        alert('目前沒有任何計時器或戰利品可以分享！');
+        return;
+      }
+
+      const timerData = timers.map(t => `${t.bossId}_${t.ch}_${t.minTarget}_${t.maxTarget}`).join(';');
+      const lootData = loots.map(l => `${encodeURIComponent(l.bossName)}_${encodeURIComponent(l.item)}_${encodeURIComponent(l.time)}_${encodeURIComponent((l.snapshotPlayers || []).join(','))}`).join(';');
+
+      const shareUrl = `${window.location.origin}${window.location.pathname}?t=${encodeURIComponent(timerData)}&l=${encodeURIComponent(lootData)}`;
+
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        alert('✅ 已成功複製「計時器 + 戰利品」完整分享連結到剪貼簿！');
+      }).catch(err => {
+        prompt('請手動複製分享網址：', shareUrl);
+      });
+    }
+
+    // 📥 匯入網址分享資料
+    function checkImportFromUrl() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const timerParam = urlParams.get('t');
+      const lootParam = urlParams.get('l');
+
+      if (!timerParam && !lootParam) return;
+
+      try {
+        let countT = 0, countL = 0;
+
+        if (timerParam) {
+          timerParam.split(';').forEach(item => {
+            const [bossId, chStr, minTargetStr, maxTargetStr] = item.split('_');
+            const boss = BOSS_DATA.find(b => b.id === bossId) || { name: bossId, icon: '👾' };
+            if (chStr && maxTargetStr) {
+              timers.push({
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 4),
+                bossId: bossId,
+                bossName: boss.name,
+                icon: boss.icon,
+                ch: parseInt(chStr),
+                minTarget: parseInt(minTargetStr),
+                maxTarget: parseInt(maxTargetStr)
+              });
+              countT++;
+            }
+          });
+        }
+
+        if (lootParam) {
+          lootParam.split(';').forEach(item => {
+            const [bossName, lootItem, timeStr, playersStr] = item.split('_');
+            const boss = BOSS_DATA.find(b => b.name === decodeURIComponent(bossName));
+            if (bossName && lootItem) {
+              loots.push({
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 4),
+                bossName: decodeURIComponent(bossName),
+                bossIcon: boss ? boss.icon : '👹',
+                item: decodeURIComponent(lootItem),
+                time: decodeURIComponent(timeStr),
+                snapshotPlayers: playersStr ? decodeURIComponent(playersStr).split(',') : []
+              });
+              countL++;
+            }
+          });
+        }
+
+        saveData();
+        window.history.replaceState({}, document.title, window.location.pathname);
+        alert(`🎉 成功載入隊友分享：${countT} 個計時器、${countL} 筆戰利品紀錄！`);
+      } catch (e) {
+        console.error('解析分享網址失敗', e);
+      }
+    }
+
+    function adjustSeconds(id, seconds) {
+      const timer = timers.find(t => t.id === id);
+      if (timer) {
+        timer.minTarget += seconds * 1000;
+        timer.maxTarget += seconds * 1000;
+        saveData();
+        renderTimers();
+      }
+    }
+
+    // 重置單一計時
+    function resetTimer(id) {
+      const timer = timers.find(t => t.id === id);
+      const boss = BOSS_DATA.find(b => b.id === timer.bossId);
+      if (timer && boss) {
+        const now = Date.now();
+        timer.minTarget = now + boss.minMins * 60 * 1000;
+        timer.maxTarget = now + boss.maxMins * 60 * 1000;
+        saveData();
+        renderTimers();
+      }
+    }
+
+    function deleteTimer(id) {
+      timers = timers.filter(t => t.id !== id);
+      saveData();
+      renderTimers();
+    }
+
+    function clearAllTimers() {
+      if (confirm('確定要清空所有倒數卡片嗎？')) {
+        timers = [];
+        saveData();
+        renderTimers();
+      }
+    }
+
+    function saveData() {
+      localStorage.setItem('maple_timers_v8', JSON.stringify(timers));
+      localStorage.setItem('maple_loots_v5', JSON.stringify(loots));
+      localStorage.setItem('maple_players_v3', JSON.stringify(players));
+    }
+
+    // 渲染計時面板
+    function renderTimers() {
+      document.getElementById('activeCount').textContent = timers.length;
+      const grid = document.getElementById('timerGrid');
+
+      if (timers.length === 0) {
+        grid.innerHTML = `<div class="col-span-full text-center py-8 text-slate-500">目前沒有計時中的 Boss</div>`;
+        return;
+      }
+
+      const now = Date.now();
+
+      grid.innerHTML = timers.map(t => {
+        const minDiffSec = Math.round((t.minTarget - now) / 1000);
+        const maxDiffSec = Math.round((t.maxTarget - now) / 1000);
+
+        let statusClass = '';
+        let statusText = '';
+        let timeDisplay = '';
+        let quickActionBtn = '';
+
+        if (minDiffSec > 0) {
+          const m = Math.floor(minDiffSec / 60);
+          const s = Math.floor(minDiffSec % 60);
+          timeDisplay = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+          
+          if (minDiffSec <= 60) {
+            statusClass = 'upcoming';
+            statusText = `⚡ 準備切頻預備！(剩 ${minDiffSec}s)`;
+          } else {
+            statusText = '⏳ 倒數至最早刷新時間';
+          }
+        } else if (maxDiffSec > 0) {
+          statusClass = 'in-range';
+          const m = Math.floor(maxDiffSec / 60);
+          const s = Math.floor(maxDiffSec % 60);
+          timeDisplay = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+          
+          statusText = `⚠️ 隨時出王中！`;
+          
+          quickActionBtn = `
+            <button onclick="resetTimer('${t.id}')" class="w-full mt-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-2 rounded text-xs transition shadow">
+              ⚔️ 已擊殺 (重新計時)
+            </button>
+          `;
+        } else {
+          statusClass = 'overdue';
+          timeDisplay = '00:00';
+          statusText = '🚨 已完全超過最晚刷新時間';
+          
+          quickActionBtn = `
+            <button onclick="resetTimer('${t.id}')" class="w-full mt-2 bg-red-600 hover:bg-red-500 text-white font-bold py-1 px-2 rounded text-xs transition shadow animate-pulse">
+              🚨 已超時! (重新計時)
+            </button>
+          `;
+        }
+
+        return `
+          <div class="timer-card p-3 rounded-lg shadow ${statusClass}">
+            <div class="flex justify-between items-center mb-1">
+              <span class="font-bold text-amber-400 text-sm">${t.icon} ${t.bossName}</span>
+              <span class="bg-slate-700 text-slate-200 text-xs px-2 py-0.5 rounded font-mono">${t.ch} 頻</span>
+            </div>
+
+            <div class="text-center py-2">
+              <div class="font-mono text-3xl font-black ${statusClass ? 'text-amber-300' : 'text-slate-100'}">
+                ${timeDisplay}
+              </div>
+              <div class="text-xs text-amber-300/90 mt-1 font-semibold">${statusText}</div>
+              ${quickActionBtn}
+            </div>
+
+            <div class="flex justify-between items-center pt-2 border-t border-slate-700/60 gap-1 mt-1">
+              <div class="flex gap-1">
+                <button onclick="adjustSeconds('${t.id}', -10)" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded text-xs text-slate-300">-10s</button>
+                <button onclick="adjustSeconds('${t.id}', -1)" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded text-xs text-slate-300">-1s</button>
+                <button onclick="adjustSeconds('${t.id}', 1)" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded text-xs text-slate-300">+1s</button>
+                <button onclick="adjustSeconds('${t.id}', 10)" class="bg-slate-800 hover:bg-slate-700 px-1.5 py-0.5 rounded text-xs text-slate-300">+10s</button>
+              </div>
+              <div class="flex gap-1">
+                <button onclick="resetTimer('${t.id}')" title="重置" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded">↻</button>
+                <button onclick="deleteTimer('${t.id}')" title="刪除" class="text-xs bg-red-900/60 hover:bg-red-800 text-red-200 px-2 py-0.5 rounded">✕</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 渲染戰利品面板
+    function renderLoots() {
+      const selectedPlayer = document.getElementById('filter-player')?.value || 'ALL';
+      const selectedBoss = document.getElementById('filter-boss')?.value || 'ALL';
+
+      const filtered = loots.filter(l => {
+        const matchPlayer = (selectedPlayer === 'ALL') || (l.snapshotPlayers && l.snapshotPlayers.includes(selectedPlayer));
+        const matchBoss = (selectedBoss === 'ALL') || (l.bossName === selectedBoss);
+        return matchPlayer && matchBoss;
+      });
+
+      const grid = document.getElementById('lootGrid');
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full text-center py-12 bg-slate-900/50 rounded-lg border border-slate-800">
+            <div class="text-slate-400 text-sm font-semibold">🔍 沒有符合篩選條件的戰利品紀錄</div>
+            <div class="text-xs text-slate-500 mt-1">請嘗試切換「成員」或「首領」篩選選單</div>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = filtered.map(l => {
+        const icon = l.bossIcon || '👹';
+        const playerTags = (l.snapshotPlayers && l.snapshotPlayers.length > 0)
+          ? l.snapshotPlayers.map(p => {
+              const isHighlight = p === selectedPlayer;
+              return `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono ${isHighlight ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'}">${p}</span>`;
+            }).join(' ')
+          : '<span class="text-slate-500 text-xs">全體成員</span>';
+
+        return `
+          <div class="loot-card p-3.5 rounded-lg flex flex-col justify-between shadow-sm hover:border-slate-500 transition">
+            <div>
+              <div class="flex justify-between items-center mb-2 pb-1.5 border-b border-slate-700/60">
+                <span class="font-bold text-amber-400 text-sm flex items-center gap-1">${icon} ${l.bossName}</span>
+                <span class="text-xs text-slate-400 font-mono">${l.time}</span>
+              </div>
+              <div class="text-sm font-bold text-slate-100 flex items-center gap-1.5 mb-3">
+                <span class="text-amber-300">🎁</span> ${l.item}
+              </div>
+              <div class="text-xs text-slate-400">
+                <div class="mb-1 text-[11px] font-semibold text-slate-500">👥 出團參與名單：</div>
+                <div class="flex flex-wrap gap-1">${playerTags}</div>
+              </div>
+            </div>
+            
+            <div class="flex justify-end mt-3 pt-2 border-t border-slate-800">
+              <button onclick="deleteLoot('${l.id}')" class="text-xs bg-slate-800 hover:bg-red-900/60 text-slate-400 hover:text-red-200 px-2 py-1 rounded transition">
+                🗑️ 刪除這筆紀錄
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    setInterval(() => {
+      if (timers.length > 0) renderTimers();
+    }, 1000);
+
+    initUI();
+    checkImportFromUrl();
+    renderTimers();
+    renderLoots();
+  </script>
+</body>
+</html>
